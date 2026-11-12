@@ -1,5 +1,13 @@
 # 🎬 Pi 3 Video Kiosk (Modo Kiosk Headless Pendrive)
 
+> ### ⚡ INSTALACIÓN DIRECTA / LIMPIAR TODO Y REINSTALAR (1 SOLO CLIC):
+> Si tu Raspberry Pi 3 tenía alguna instalación anterior (VLC AutoPlay Studio u otros scripts) y querés dejarla 100% limpia y funcionando de cero, copiá y pegá este comando en la terminal:
+> ```bash
+> sudo pkill -9 -f "mpv|vlc|cvlc|sync_runner|app.py|kiosk.py" 2>/dev/null || true; rm -rf ~/vlc-autoplay-studio ~/pi3-video-kiosk ~/.config/vlc-autoplay ~/.config/autostart/vlc-autoplay.desktop; curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
+> ```
+
+---
+
 Sistema ultra-optimizado, ultra-simple y sin dependencias para **Raspberry Pi 3**:
 * **Modo Kiosk Headless Puro**: Sin escritorio, sin ventanas, sin cursor, sin menús ni texto en pantalla.
 * **Plug & Play con Pendrive USB**: Conectás cualquier pendrive y arranca a reproducir de inmediato.
@@ -17,12 +25,12 @@ Sistema ultra-optimizado, ultra-simple y sin dependencias para **Raspberry Pi 3*
 Copiá y pegá este comando en la terminal de tu Raspberry Pi 3:
 
 ```bash
-git clone https://github.com/chuledp/pi3-video-kiosk.git && cd pi3-video-kiosk && sudo ./install.sh
+curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
 ```
 
-*(O de forma directa en un solo paso):*
+*(O clonando el repositorio):*
 ```bash
-curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
+git clone https://github.com/chuledp/pi3-video-kiosk.git && cd pi3-video-kiosk && sudo ./install.sh
 ```
 
 El script se encarga automáticamente de:
@@ -39,6 +47,26 @@ El script se encarga automáticamente de:
 2. Copiá tu video en formato **1080p H.264** (`.mp4`, `.mov`, `.mkv`).
 3. Enchufalo a la Raspberry Pi 3.
 4. **¡Listo!** El sistema lo monta solo en modo seguro de solo-lectura (protegiendo el pendrive si alguien desconecta la energía de golpe) y arranca a reproducir a pantalla completa.
+
+---
+
+## 🧹 Limpieza Manual de Instalaciones Anteriores
+
+Si solo querés limpiar cualquier residuo anterior sin reinstalar:
+
+```bash
+sudo pkill -9 -f "mpv|vlc|cvlc|sync_runner|app.py|kiosk.py" 2>/dev/null || true
+sudo systemctl stop pi3-video-kiosk 2>/dev/null || true
+sudo systemctl disable pi3-video-kiosk 2>/dev/null || true
+sudo rm -f /etc/systemd/system/pi3-video-kiosk.service
+sudo systemctl daemon-reload
+rm -f ~/.config/autostart/vlc-autoplay.desktop ~/.config/autostart/*kiosk*.desktop
+rm -rf ~/.config/vlc-autoplay
+rm -f ~/Desktop/*AutoPlay*.desktop ~/Desktop/*Kiosk*.desktop
+sudo umount -l /media/usb_kiosk 2>/dev/null || true
+sudo rm -rf /opt/pi3-video-kiosk /media/usb_kiosk
+rm -rf ~/vlc-autoplay-studio ~/pi3-video-kiosk ~/pi3-kiosk-player
+```
 
 ---
 

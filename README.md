@@ -14,10 +14,15 @@ Sistema ultra-optimizado, ultra-simple y sin dependencias para **Raspberry Pi 3*
 
 ## 🚀 Instalación en la Raspberry Pi 3
 
-Dentro de la carpeta `pi3-video-kiosk/`, ejecutá:
+Copiá y pegá este comando en la terminal de tu Raspberry Pi 3:
 
 ```bash
-sudo ./install.sh
+git clone https://github.com/chuledp/pi3-video-kiosk.git && cd pi3-video-kiosk && sudo ./install.sh
+```
+
+*(O de forma directa en un solo paso):*
+```bash
+curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
 ```
 
 El script se encarga automáticamente de:

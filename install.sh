@@ -69,17 +69,28 @@ fi
 # 3. Copiar script de ejecución a /opt/pi3-video-kiosk
 echo "3/4. Instalando reproductor en $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-cp "$SCRIPT_DIR/player.py" "$INSTALL_DIR/player.py"
-chmod +x "$INSTALL_DIR/player.py"
+if [ -f "$SCRIPT_DIR/player.py" ]; then
+    cp "$SCRIPT_DIR/player.py" "$INSTALL_DIR/player.py"
+    cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
+else
+    echo "    Descargando archivos desde GitHub..."
+    curl -sSL "https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/player.py" -o "$INSTALL_DIR/player.py"
+    curl -sSL "https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/uninstall.sh" -o "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
+fi
+chmod +x "$INSTALL_DIR/player.py" "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
 
 mkdir -p /media/usb_kiosk
 
 # 4. Configurar servicio systemd para arranque automático en boot
 echo "4/4. Configurando servicio de arranque automático (systemd)..."
-SERVICE_SRC="$SCRIPT_DIR/pi3-video-kiosk.service"
 SERVICE_DST="/etc/systemd/system/pi3-video-kiosk.service"
 
-cp "$SERVICE_SRC" "$SERVICE_DST"
+if [ -f "$SCRIPT_DIR/pi3-video-kiosk.service" ]; then
+    cp "$SCRIPT_DIR/pi3-video-kiosk.service" "$SERVICE_DST"
+else
+    echo "    Descargando servicio systemd desde GitHub..."
+    curl -sSL "https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/pi3-video-kiosk.service" -o "$SERVICE_DST"
+fi
 
 # Ajustar variables según el usuario real
 sed -i "s|/home/pi|$REAL_HOME|g" "$SERVICE_DST"

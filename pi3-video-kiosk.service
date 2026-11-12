@@ -1,0 +1,20 @@
+[Unit]
+Description=Pi 3 Video Kiosk (Ultra-Optimized Pendrive Auto-Player)
+After=sound.target local-fs.target systemd-udevd.service
+Wants=sound.target
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/usr/bin/python3 /opt/pi3-video-kiosk/player.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

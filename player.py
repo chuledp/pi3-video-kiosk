@@ -19,6 +19,7 @@ import sys
 import time
 import glob
 import signal
+import codecs
 import shutil
 import subprocess
 from typing import Optional, List
@@ -31,6 +32,28 @@ def log(msg: str):
     """Muestra logs con marca de tiempo para monitoreo mediante journalctl."""
     t = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{t}] [Pi3-Kiosk] {msg}", flush=True)
+
+
+def setup_display_environment():
+    """Detecta y configura el entorno de pantalla dinámicamente."""
+    # Buscar socket activo de servidor X11 (/tmp/.X11-unix/X0, etc.)
+    x11_sockets = glob.glob("/tmp/.X11-unix/X*")
+    if x11_sockets:
+        disp_num = os.path.basename(x11_sockets[0]).replace("X", ":")
+        os.environ.setdefault("DISPLAY", disp_num)
+        for auth_candidate in [
+            os.path.expanduser("~/.Xauthority"),
+            "/home/pi/.Xauthority",
+            "/root/.Xauthority"
+        ]:
+            if os.path.isfile(auth_candidate):
+                os.environ.setdefault("XAUTHORITY", auth_candidate)
+                break
+    elif not os.environ.get("WAYLAND_DISPLAY"):
+        # Modo Consola / Headless puro sin X11:
+        # Remover DISPLAY para que MPV use DRM/KMS directo a framebuffer sin errores
+        os.environ.pop("DISPLAY", None)
+        os.environ.pop("XAUTHORITY", None)
 
 
 def ensure_screen_awake():
@@ -68,39 +91,69 @@ def is_mounted(path_or_dev: str) -> bool:
     return False
 
 
-def get_usb_partitions() -> List[str]:
-    """Detecta particiones de pendrives USB conectados (/dev/sd[a-z][1-9])."""
-    partitions = []
+def decode_mount_path(path: str) -> str:
+    """Decodifica secuencias de escape octales en rutas de /proc/mounts (ej. \\040 -> espacio)."""
     try:
-        for disk in glob.glob("/sys/block/sd[a-z]"):
-            disk_name = os.path.basename(disk)
-            part_paths = glob.glob(f"/sys/block/{disk_name}/{disk_name}[1-9]*")
-            if part_paths:
-                for p in part_paths:
-                    partitions.append(f"/dev/{os.path.basename(p)}")
-            else:
-                partitions.append(f"/dev/{disk_name}")
+        return codecs.decode(path, "unicode_escape")
+    except Exception:
+        return path.replace(r"\040", " ").replace(r"\011", "\t")
+
+
+def get_usb_partitions() -> List[str]:
+    """Detecta particiones y discos de pendrives USB conectados."""
+    partitions = []
+
+    # 1. Por udev by-id (/dev/disk/by-id/usb-*)
+    try:
+        for p in sorted(glob.glob("/dev/disk/by-id/usb*")):
+            if not p.endswith("-part"):
+                real = os.path.realpath(p)
+                if real.startswith("/dev/sd") and real not in partitions:
+                    partitions.append(real)
+    except Exception:
+        pass
+
+    # 2. Por /sys/class/block (particiones sda1, sdb1, etc.)
+    try:
+        part_devs = sorted(glob.glob("/sys/class/block/sd[a-z][1-9]*"))
+        for p in part_devs:
+            dev_path = f"/dev/{os.path.basename(p)}"
+            if dev_path not in partitions:
+                partitions.append(dev_path)
+
+        # Si no hay particiones numeradas, buscar discos enteros (sda, sdb)
+        if not partitions:
+            disk_devs = sorted(glob.glob("/sys/class/block/sd[a-z]"))
+            for d in disk_devs:
+                dev_path = f"/dev/{os.path.basename(d)}"
+                if dev_path not in partitions:
+                    partitions.append(dev_path)
     except Exception as e:
         log(f"Error detectando particiones USB: {e}")
-    return partitions
+
+    # Priorizar particiones numeradas sobre discos enteros
+    numbered = [p for p in partitions if any(c.isdigit() for c in p)]
+    return numbered if numbered else partitions
 
 
 def get_active_usb_mounts() -> List[str]:
     """Obtiene directorios de pendrives montados por el sistema (/media, /mnt, /run/media)."""
     mount_dirs = []
     base_dirs = ["/media", "/mnt", "/run/media"]
+    ignore_exact = {"/", "/media", "/mnt", "/run/media", USB_MOUNT_POINT}
 
     try:
         with open("/proc/mounts", "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) >= 2:
-                    dev, mount_point = parts[0], parts[1]
+                    dev, raw_mount = parts[0], parts[1]
+                    mount_point = decode_mount_path(raw_mount)
                     if dev.startswith("/dev/sd") or any(mount_point.startswith(b) for b in base_dirs):
-                        if os.path.isdir(mount_point) and mount_point not in ("/", USB_MOUNT_POINT):
+                        if os.path.isdir(mount_point) and mount_point not in ignore_exact:
                             mount_dirs.append(mount_point)
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"Error leyendo /proc/mounts: {e}")
 
     if is_mounted(USB_MOUNT_POINT) and os.path.isdir(USB_MOUNT_POINT):
         mount_dirs.append(USB_MOUNT_POINT)
@@ -114,7 +167,7 @@ def auto_mount_first_pendrive() -> Optional[str]:
     if not parts:
         return None
 
-    # Si ya está montado en algún directorio, retornar ese
+    # Si ya está montado en algún directorio por el sistema, usar ese
     active_mounts = get_active_usb_mounts()
     if active_mounts:
         return active_mounts[0]
@@ -126,18 +179,31 @@ def auto_mount_first_pendrive() -> Optional[str]:
             continue
 
         log(f"Montando pendrive ({dev}) en modo seguro (solo-lectura)...")
-        # Intento de montaje genérico
-        r = subprocess.run(["mount", "-o", "ro,noatime,nofail", dev, USB_MOUNT_POINT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 1. Intento de montaje genérico de Linux (sin la opción errónea 'nofail')
+        r = subprocess.run(
+            ["mount", "-o", "ro,noatime", dev, USB_MOUNT_POINT],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True
+        )
         if r.returncode == 0:
             log(f"Pendrive montado con éxito en {USB_MOUNT_POINT}")
             return USB_MOUNT_POINT
 
-        # Intento con sistemas de archivos explícitos (vfat, exfat, ntfs, ext4)
-        for fs in ["vfat", "exfat", "ntfs", "ext4"]:
-            r2 = subprocess.run(["mount", "-t", fs, "-o", "ro,noatime,nofail", dev, USB_MOUNT_POINT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # 2. Intento con sistemas de archivos explícitos (vfat, exfat, ntfs-3g, ext4)
+        for fs in ["vfat", "exfat", "ntfs-3g", "ntfs", "ext4"]:
+            r2 = subprocess.run(
+                ["mount", "-t", fs, "-o", "ro,noatime", dev, USB_MOUNT_POINT],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True
+            )
             if r2.returncode == 0:
                 log(f"Pendrive montado ({fs}) con éxito en {USB_MOUNT_POINT}")
                 return USB_MOUNT_POINT
+
+        err_msg = r.stderr.strip() if r.stderr else "desconocido"
+        log(f"No se pudo montar {dev} de forma automática ({err_msg}).")
 
     return None
 
@@ -163,17 +229,21 @@ def find_first_video(directory: str) -> Optional[str]:
     try:
         for root, dirs, files in os.walk(directory):
             # Excluir carpetas ocultas y de papelera
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d.lower() not in ("system volume information", "$recycle.bin", ".trashes")]
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".")
+                and d.lower() not in ("system volume information", "$recycle.bin", ".trashes", "trashes", "found.000")
+            ]
             for file in files:
                 # Filtrar archivos ocultos y metadatos AppleDouble (._video.mp4)
-                if file.startswith("."):
+                if file.startswith(".") or file.startswith("._"):
                     continue
                 ext = os.path.splitext(file)[1].lower()
                 if ext in VIDEO_EXTENSIONS:
                     full_path = os.path.join(root, file)
                     try:
-                        # Descartar archivos corruptos menores a 1 MB
-                        if os.path.getsize(full_path) > 1024 * 1024:
+                        # Descartar archivos vacíos o stubs corruptos (< 64 KB)
+                        if os.path.getsize(full_path) > 64 * 1024:
                             candidates.append(full_path)
                     except OSError:
                         pass
@@ -197,11 +267,11 @@ def build_mpv_command(video_path: str) -> List[str]:
         # Bucle infinito perfecto sin saltos ni pantalla negra
         "--loop-file=inf",
         "--keep-open=yes",
-        # Aceleración de hardware H.264 V4L2 M2M para Raspberry Pi 3
+        # Aceleración de hardware H.264 V4L2 M2M con fallback seguro
         "--hwdec=auto-safe",
-        "--vo=gpu",
+        # Prioridad de salida de video: GPU con fallback automático a DRM para consola pura
+        "--vo=gpu,drm",
         "--profile=fast",
-        "--gpu-dumb-mode=yes",
         "--vd-lavc-threads=4",
         # Caché generoso en RAM para evitar micro-tirones al leer de USB
         "--demuxer-max-bytes=32M",
@@ -215,7 +285,6 @@ def build_mpv_command(video_path: str) -> List[str]:
         "--no-terminal",
         "--no-osd-bar",
         "--osd-level=0",
-        "--really-quiet",
         video_path
     ]
 
@@ -247,6 +316,7 @@ class Pi3KioskPlayer:
         if not video_file or not os.path.exists(video_file):
             return False
 
+        setup_display_environment()
         ensure_screen_awake()
         cmd = build_mpv_command(video_file)
 
@@ -257,9 +327,21 @@ class Pi3KioskPlayer:
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.PIPE,
+                text=True
             )
             self.current_video_file = video_file
+
+            # Comprobar si arranca o si falla en el primer segundo
+            time.sleep(0.5)
+            if self.process.poll() is not None:
+                err = self.process.stderr.read() if self.process.stderr else ""
+                log(f"⚠️ MPV falló al iniciar (código {self.process.returncode}): {err.strip()}")
+                self.process = None
+                self.current_video_file = None
+                return False
+
+            log("🎬 Video iniciado y reproduciendo en bucle continuo.")
             return True
         except Exception as e:
             log(f"Error al ejecutar MPV: {e}")

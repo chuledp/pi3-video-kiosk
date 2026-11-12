@@ -6,9 +6,6 @@ Wants=sound.target
 [Service]
 Type=simple
 Environment=PYTHONUNBUFFERED=1
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/pi/.Xauthority
-Environment=XDG_RUNTIME_DIR=/run/user/1000
 ExecStart=/usr/bin/python3 /opt/pi3-video-kiosk/player.py
 Restart=always
 RestartSec=2

@@ -39,9 +39,9 @@ fi
 REAL_HOME=$(eval echo "~$REAL_USER")
 
 # 1. Instalar dependencias esenciales mínimas (sin entornos pesados)
-echo "1/4. Instalando paquetes mínimos (mpv, alsa-utils)..."
+echo "1/4. Instalando paquetes mínimos (mpv, alsa-utils, soporte pendrives exFAT/NTFS)..."
 apt update || true
-apt install -y mpv alsa-utils || true
+apt install -y mpv alsa-utils exfat-fuse exfatprogs ntfs-3g || true
 
 # 2. Configurar memoria de GPU (gpu_mem=128) para decodificación fluida 1080p
 echo "2/4. Optimizando memoria de GPU en Raspberry Pi 3..."

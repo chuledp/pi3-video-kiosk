@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from player import find_first_video, build_mpv_command
+from player import find_first_video, build_mpv_command, decode_mount_path
 
 class TestPi3VideoKiosk(unittest.TestCase):
     def setUp(self):
@@ -41,6 +41,18 @@ class TestPi3VideoKiosk(unittest.TestCase):
     def test_empty_directory_returns_none(self):
         chosen = find_first_video(self.temp_dir.name)
         self.assertIsNone(chosen)
+
+    def test_decode_mount_path_spaces(self):
+        escaped = r"/media/pi/USB\040DRIVE\040NAME"
+        decoded = decode_mount_path(escaped)
+        self.assertEqual(decoded, "/media/pi/USB DRIVE NAME")
+
+    def test_find_first_video_uppercase_extension(self):
+        vid_upper = os.path.join(self.temp_dir.name, "clip_test.MP4")
+        with open(vid_upper, "wb") as f:
+            f.write(b"0" * (100 * 1024))
+        chosen = find_first_video(self.temp_dir.name)
+        self.assertEqual(chosen, vid_upper)
 
     def test_build_mpv_command_flags(self):
         vid = "/media/usb/test.mp4"

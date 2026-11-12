@@ -3,7 +3,7 @@
 > ### ⚡ INSTALACIÓN DIRECTA / LIMPIAR TODO Y REINSTALAR (1 SOLO CLIC):
 > Si tu Raspberry Pi 3 tenía alguna instalación anterior (VLC AutoPlay Studio u otros scripts) y querés dejarla 100% limpia y funcionando de cero, copiá y pegá este comando en la terminal:
 > ```bash
-> sudo pkill -9 -f "mpv|vlc|cvlc|sync_runner|app.py|kiosk.py" 2>/dev/null || true; rm -rf ~/vlc-autoplay-studio ~/pi3-video-kiosk ~/.config/vlc-autoplay ~/.config/autostart/vlc-autoplay.desktop; curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
+> sudo pkill -9 -f "mpv|vlc|cvlc|sync_runner|app.py|kiosk.py" 2>/dev/null || true; rm -rf ~/vlc-autoplay-studio ~/pi3-video-kiosk ~/.config/vlc-autoplay ~/.config/autostart/vlc-autoplay.desktop; curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | sudo bash
 > ```
 
 ---
@@ -25,7 +25,7 @@ Sistema ultra-optimizado, ultra-simple y sin dependencias para **Raspberry Pi 3*
 Copiá y pegá este comando en la terminal de tu Raspberry Pi 3:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh | sudo bash
 ```
 
 *(O clonando el repositorio):*

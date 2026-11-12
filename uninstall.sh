@@ -6,8 +6,13 @@
 set -e
 
 if [ "$EUID" -ne 0 ]; then
-    echo "Elevando a permisos de root (sudo)..."
-    exec sudo bash "$0" "$@"
+    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "-bash" ] && [ "$0" != "sh" ]; then
+        echo "Elevando a permisos de root (sudo)..."
+        exec sudo bash "$0" "$@"
+    else
+        echo "Elevando a permisos de root (sudo)..."
+        exec sudo bash -c "$(curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/uninstall.sh)" -- "$@"
+    fi
 fi
 
 echo "Deteniendo y deshabilitando servicio pi3-video-kiosk..."

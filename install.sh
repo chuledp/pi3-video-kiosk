@@ -10,19 +10,32 @@ set -e
 
 # Asegurar permisos de superusuario
 if [ "$EUID" -ne 0 ]; then
-    echo "Elevando a permisos de root (sudo)..."
-    exec sudo bash "$0" "$@"
+    if [ -f "$0" ] && [ "$0" != "bash" ] && [ "$0" != "-bash" ] && [ "$0" != "sh" ]; then
+        echo "Elevando a permisos de root (sudo)..."
+        exec sudo bash "$0" "$@"
+    else
+        echo "Elevando a permisos de root (sudo)..."
+        exec sudo bash -c "$(curl -sSL https://raw.githubusercontent.com/chuledp/pi3-video-kiosk/main/install.sh)" -- "$@"
+    fi
 fi
 
 echo "==========================================================="
 echo "🎬 Instalando Pi 3 Video Kiosk (Modo Kiosk Headless Pendrive)"
 echo "==========================================================="
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR=""
+if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 INSTALL_DIR="/opt/pi3-video-kiosk"
 
 # Detectar usuario real (por ej. 'pi')
-REAL_USER="${SUDO_USER:-pi}"
+REAL_USER="${SUDO_USER:-$USER}"
+if [ -z "$REAL_USER" ] || [ "$REAL_USER" = "root" ]; then
+    if id -u pi >/dev/null 2>&1; then
+        REAL_USER="pi"
+    fi
+fi
 REAL_HOME=$(eval echo "~$REAL_USER")
 
 # 1. Instalar dependencias esenciales mínimas (sin entornos pesados)
@@ -69,7 +82,7 @@ fi
 # 3. Copiar script de ejecución a /opt/pi3-video-kiosk
 echo "3/4. Instalando reproductor en $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
-if [ -f "$SCRIPT_DIR/player.py" ]; then
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/player.py" ]; then
     cp "$SCRIPT_DIR/player.py" "$INSTALL_DIR/player.py"
     cp "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh" 2>/dev/null || true
 else
@@ -85,7 +98,7 @@ mkdir -p /media/usb_kiosk
 echo "4/4. Configurando servicio de arranque automático (systemd)..."
 SERVICE_DST="/etc/systemd/system/pi3-video-kiosk.service"
 
-if [ -f "$SCRIPT_DIR/pi3-video-kiosk.service" ]; then
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pi3-video-kiosk.service" ]; then
     cp "$SCRIPT_DIR/pi3-video-kiosk.service" "$SERVICE_DST"
 else
     echo "    Descargando servicio systemd desde GitHub..."

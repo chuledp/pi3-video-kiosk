@@ -40,20 +40,66 @@ def setup_display_environment():
     x11_sockets = glob.glob("/tmp/.X11-unix/X*")
     if x11_sockets:
         disp_num = os.path.basename(x11_sockets[0]).replace("X", ":")
-        os.environ.setdefault("DISPLAY", disp_num)
-        for auth_candidate in [
+        os.environ["DISPLAY"] = disp_num
+        
+        # Buscar .Xauthority en todos los usuarios posibles
+        xauth_candidates = glob.glob("/home/*/.Xauthority") + [
             os.path.expanduser("~/.Xauthority"),
-            "/home/pi/.Xauthority",
             "/root/.Xauthority"
-        ]:
-            if os.path.isfile(auth_candidate):
-                os.environ.setdefault("XAUTHORITY", auth_candidate)
+        ]
+        for auth in xauth_candidates:
+            if os.path.isfile(auth) and os.path.getsize(auth) > 0:
+                os.environ["XAUTHORITY"] = auth
                 break
-    elif not os.environ.get("WAYLAND_DISPLAY"):
+
+        # Habilitar acceso X11 para root si xhost está disponible
+        if shutil.which("xhost"):
+            try:
+                subprocess.run(["xhost", "+local:"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+    elif os.path.exists("/run/user"):
+        # Buscar sockets de Wayland (/run/user/1000/wayland-0)
+        wayland_sockets = glob.glob("/run/user/*/wayland-*")
+        if wayland_sockets:
+            os.environ["WAYLAND_DISPLAY"] = os.path.basename(wayland_sockets[0])
+            uid = wayland_sockets[0].split("/")[3]
+            os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
+    else:
         # Modo Consola / Headless puro sin X11:
         # Remover DISPLAY para que MPV use DRM/KMS directo a framebuffer sin errores
         os.environ.pop("DISPLAY", None)
         os.environ.pop("XAUTHORITY", None)
+
+
+def wait_for_display_server(timeout=15):
+    """
+    Si el sistema tiene entorno de escritorio (X11 / LightDM), espera a que esté listo
+    en el arranque para no iniciar el video antes de que el escritorio tome la pantalla.
+    """
+    has_desktop = (
+        os.path.exists("/usr/sbin/lightdm")
+        or os.path.exists("/etc/X11")
+        or os.path.exists("/usr/bin/startx")
+    )
+    if not has_desktop:
+        return
+
+    # Si ya hay un display X11 listo, no demorar
+    if glob.glob("/tmp/.X11-unix/X*") or glob.glob("/run/user/*/wayland-*"):
+        return
+
+    log("Esperando inicialización del entorno gráfico...")
+    start = time.time()
+    while time.time() - start < timeout:
+        if glob.glob("/tmp/.X11-unix/X*") or glob.glob("/run/user/*/wayland-*"):
+            # Pequeña pausa para que termine de renderizar el wallpaper/panel
+            time.sleep(2.5)
+            log("Servidor gráfico detectado y listo.")
+            return
+        time.sleep(1.0)
+    log("Tiempo de espera gráfico agotado. Continuando con inicio...")
 
 
 def ensure_screen_awake():
@@ -264,6 +310,7 @@ def build_mpv_command(video_path: str) -> List[str]:
     return [
         "mpv",
         "--fullscreen",
+        "--ontop",
         # Bucle infinito perfecto sin saltos ni pantalla negra
         "--loop-file=inf",
         "--keep-open=yes",
@@ -293,6 +340,7 @@ class Pi3KioskPlayer:
     def __init__(self):
         self.process: Optional[subprocess.Popen] = None
         self.current_video_file: Optional[str] = None
+        self.started_in_x11 = False
         self.running = True
 
     def stop_playback(self):
@@ -317,6 +365,7 @@ class Pi3KioskPlayer:
             return False
 
         setup_display_environment()
+        self.started_in_x11 = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
         ensure_screen_awake()
         cmd = build_mpv_command(video_file)
 
@@ -366,10 +415,20 @@ class Pi3KioskPlayer:
         log("================================================================")
         log("🚀 Pi 3 Video Kiosk Activado (Esperando Pendrive USB)")
         log("================================================================")
+        wait_for_display_server()
         ensure_screen_awake()
 
         while self.running:
             try:
+                # Si el video arrancó en consola y luego inició el escritorio X11, migrar a X11
+                if self.process is not None and not self.started_in_x11:
+                    if glob.glob("/tmp/.X11-unix/X*") or os.environ.get("WAYLAND_DISPLAY"):
+                        log("Servidor gráfico detectado. Relanzando video en el escritorio...")
+                        if self.current_video_file:
+                            self.start_playback(self.current_video_file)
+                            time.sleep(1.0)
+                            continue
+
                 video = self.scan_usb_for_video()
 
                 if video:

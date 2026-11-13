@@ -25,5 +25,13 @@ systemctl daemon-reload
 rm -rf /opt/pi3-video-kiosk
 rm -rf /media/usb_kiosk
 
-echo "✅ Pi 3 Video Kiosk desinstalado correctamente."
+# Restaurar entorno de escritorio
+if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_boot_behaviour B4 2>/dev/null || true
+fi
+systemctl set-default graphical.target 2>/dev/null || true
+systemctl enable lightdm.service 2>/dev/null || true
+systemctl start lightdm.service 2>/dev/null || true
+
+echo "✅ Pi 3 Video Kiosk desinstalado correctamente (entorno de escritorio restaurado)."
 

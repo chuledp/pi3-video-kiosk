@@ -34,92 +34,21 @@ def log(msg: str):
     print(f"[{t}] [Pi3-Kiosk] {msg}", flush=True)
 
 
-def setup_display_environment():
-    """Detecta y configura el entorno de pantalla dinámicamente."""
-    # Buscar socket activo de servidor X11 (/tmp/.X11-unix/X0, etc.)
-    x11_sockets = glob.glob("/tmp/.X11-unix/X*")
-    if x11_sockets:
-        disp_num = os.path.basename(x11_sockets[0]).replace("X", ":")
-        os.environ["DISPLAY"] = disp_num
-        
-        # Buscar .Xauthority en todos los usuarios posibles
-        xauth_candidates = glob.glob("/home/*/.Xauthority") + [
-            os.path.expanduser("~/.Xauthority"),
-            "/root/.Xauthority"
-        ]
-        for auth in xauth_candidates:
-            if os.path.isfile(auth) and os.path.getsize(auth) > 0:
-                os.environ["XAUTHORITY"] = auth
-                break
-
-        # Habilitar acceso X11 para root si xhost está disponible
-        if shutil.which("xhost"):
-            try:
-                subprocess.run(["xhost", "+local:"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception:
-                pass
-
-    elif os.path.exists("/run/user"):
-        # Buscar sockets de Wayland (/run/user/1000/wayland-0)
-        wayland_sockets = glob.glob("/run/user/*/wayland-*")
-        if wayland_sockets:
-            os.environ["WAYLAND_DISPLAY"] = os.path.basename(wayland_sockets[0])
-            uid = wayland_sockets[0].split("/")[3]
-            os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-    else:
-        # Modo Consola / Headless puro sin X11:
-        # Remover DISPLAY para que MPV use DRM/KMS directo a framebuffer sin errores
-        os.environ.pop("DISPLAY", None)
-        os.environ.pop("XAUTHORITY", None)
-
-
-def wait_for_display_server(timeout=15):
-    """
-    Si el sistema tiene entorno de escritorio (X11 / LightDM), espera a que esté listo
-    en el arranque para no iniciar el video antes de que el escritorio tome la pantalla.
-    """
-    has_desktop = (
-        os.path.exists("/usr/sbin/lightdm")
-        or os.path.exists("/etc/X11")
-        or os.path.exists("/usr/bin/startx")
-    )
-    if not has_desktop:
-        return
-
-    # Si ya hay un display X11 listo, no demorar
-    if glob.glob("/tmp/.X11-unix/X*") or glob.glob("/run/user/*/wayland-*"):
-        return
-
-    log("Esperando inicialización del entorno gráfico...")
-    start = time.time()
-    while time.time() - start < timeout:
-        if glob.glob("/tmp/.X11-unix/X*") or glob.glob("/run/user/*/wayland-*"):
-            # Pequeña pausa para que termine de renderizar el wallpaper/panel
-            time.sleep(2.5)
-            log("Servidor gráfico detectado y listo.")
-            return
-        time.sleep(1.0)
-    log("Tiempo de espera gráfico agotado. Continuando con inicio...")
+def setup_headless_environment():
+    """Garantiza un entorno Headless puro sin servidor X11 ni Wayland."""
+    for var in ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"]:
+        os.environ.pop(var, None)
 
 
 def ensure_screen_awake():
-    """Desactiva protector de pantalla y reposo tanto en consola como en entorno gráfico."""
+    """Desactiva protector de pantalla, reposo y oculta el cursor parpadeante en consola."""
     if shutil.which("setterm"):
         try:
-            subprocess.run(["setterm", "-blank", "0", "-powerdown", "0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-
-    if os.environ.get("DISPLAY") and shutil.which("xset"):
-        try:
-            subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
-
-    # Si hay xsetroot, poner fondo negro puro
-    if os.environ.get("DISPLAY") and shutil.which("xsetroot"):
-        try:
-            subprocess.run(["xsetroot", "-solid", "black", "-cursor_name", "left_ptr"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["setterm", "-blank", "0", "-powerdown", "0", "-cursor", "off"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
         except Exception:
             pass
 
@@ -305,25 +234,25 @@ def find_first_video(directory: str) -> Optional[str]:
 
 def build_mpv_command(video_path: str) -> List[str]:
     """
-    Construye la línea de ejecución de MPV con aceleración por hardware en Pi 3.
+    Construye la línea de ejecución de MPV con aceleración por hardware en Pi 3 (Headless puro).
     """
     return [
         "mpv",
         "--fullscreen",
-        "--ontop",
         # Bucle infinito perfecto sin saltos ni pantalla negra
         "--loop-file=inf",
         "--keep-open=yes",
         # Aceleración de hardware H.264 V4L2 M2M con fallback seguro
         "--hwdec=auto-safe",
-        # Prioridad de salida de video: GPU con fallback automático a DRM para consola pura
+        # Salida de video directa a DRM/KMS para modo Headless puro (sin X11)
         "--vo=gpu,drm",
         "--profile=fast",
         "--vd-lavc-threads=4",
         # Caché generoso en RAM para evitar micro-tirones al leer de USB
         "--demuxer-max-bytes=32M",
         "--demuxer-readahead-secs=10",
-        # Audio automático por HDMI al 100%
+        # Audio automático por HDMI vía ALSA al 100%
+        "--ao=alsa",
         "--audio-device=auto",
         "--audio-channels=auto-safe",
         "--volume=100",
@@ -340,7 +269,6 @@ class Pi3KioskPlayer:
     def __init__(self):
         self.process: Optional[subprocess.Popen] = None
         self.current_video_file: Optional[str] = None
-        self.started_in_x11 = False
         self.running = True
 
     def stop_playback(self):
@@ -364,8 +292,7 @@ class Pi3KioskPlayer:
         if not video_file or not os.path.exists(video_file):
             return False
 
-        setup_display_environment()
-        self.started_in_x11 = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        setup_headless_environment()
         ensure_screen_awake()
         cmd = build_mpv_command(video_file)
 
@@ -413,22 +340,13 @@ class Pi3KioskPlayer:
     def run(self):
         """Ciclo principal continuo: vigila presencia del pendrive e inicia/detiene el video."""
         log("================================================================")
-        log("🚀 Pi 3 Video Kiosk Activado (Esperando Pendrive USB)")
+        log("🚀 Pi 3 Video Kiosk Headless Activado (Esperando Pendrive USB)")
         log("================================================================")
-        wait_for_display_server()
+        setup_headless_environment()
         ensure_screen_awake()
 
         while self.running:
             try:
-                # Si el video arrancó en consola y luego inició el escritorio X11, migrar a X11
-                if self.process is not None and not self.started_in_x11:
-                    if glob.glob("/tmp/.X11-unix/X*") or os.environ.get("WAYLAND_DISPLAY"):
-                        log("Servidor gráfico detectado. Relanzando video en el escritorio...")
-                        if self.current_video_file:
-                            self.start_playback(self.current_video_file)
-                            time.sleep(1.0)
-                            continue
-
                 video = self.scan_usb_for_video()
 
                 if video:

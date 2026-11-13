@@ -39,12 +39,12 @@ fi
 REAL_HOME=$(eval echo "~$REAL_USER")
 
 # 1. Instalar dependencias esenciales mínimas (sin entornos pesados)
-echo "1/4. Instalando paquetes mínimos (mpv, alsa-utils, soporte pendrives exFAT/NTFS)..."
+echo "1/5. Instalando paquetes mínimos (mpv, alsa-utils, soporte pendrives exFAT/NTFS)..."
 apt update || true
 apt install -y mpv alsa-utils exfat-fuse exfatprogs ntfs-3g || true
 
 # 2. Configurar memoria de GPU (gpu_mem=128) para decodificación fluida 1080p
-echo "2/4. Optimizando memoria de GPU en Raspberry Pi 3..."
+echo "2/5. Optimizando memoria de GPU en Raspberry Pi 3..."
 CONFIG_TXT=""
 if [ -f "/boot/firmware/config.txt" ]; then
     CONFIG_TXT="/boot/firmware/config.txt"
@@ -64,7 +64,18 @@ if [ -n "$CONFIG_TXT" ]; then
     echo "    Memoria GPU configurada a 128 MB en $CONFIG_TXT."
 fi
 
-# Evitar suspensión de pantalla en consola (consoleblank=0)
+# 3. Desactivar completamente entorno de escritorio (activar modo Headless puro sin GUI)
+echo "3/5. Desactivando entorno de escritorio (modo Headless puro CLI)..."
+if command -v raspi-config >/dev/null 2>&1; then
+    raspi-config nonint do_boot_behaviour B1 2>/dev/null || true
+fi
+systemctl set-default multi-user.target 2>/dev/null || true
+systemctl disable lightdm.service 2>/dev/null || true
+systemctl stop lightdm.service 2>/dev/null || true
+pkill -9 -f "lightdm|Xorg|lxsession|pcmanfm|lxpanel" 2>/dev/null || true
+
+# 4. Evitar suspensión de pantalla y ocultar cursor en consola
+echo "4/5. Optimizando pantalla en modo consola pura..."
 CMDLINE_TXT=""
 if [ -f "/boot/firmware/cmdline.txt" ]; then
     CMDLINE_TXT="/boot/firmware/cmdline.txt"
@@ -73,14 +84,16 @@ elif [ -f "/boot/cmdline.txt" ]; then
 fi
 
 if [ -n "$CMDLINE_TXT" ]; then
-    if ! grep -q "consoleblank=0" "$CMDLINE_TXT"; then
-        sed -i 's/$/ consoleblank=0/' "$CMDLINE_TXT"
-        echo "    consoleblank=0 agregado a $CMDLINE_TXT."
-    fi
+    for opt in "consoleblank=0" "vt.global_cursor_default=0" "quiet" "loglevel=3" "logo.nologo"; do
+        if ! grep -q "$opt" "$CMDLINE_TXT"; then
+            sed -i "s/$/ $opt/" "$CMDLINE_TXT"
+        fi
+    done
+    echo "    Optimización de consola y arranque limpio configurada en $CMDLINE_TXT."
 fi
 
-# 3. Copiar script de ejecución a /opt/pi3-video-kiosk
-echo "3/4. Instalando reproductor en $INSTALL_DIR..."
+# 5. Copiar script de ejecución a /opt/pi3-video-kiosk
+echo "5/5. Instalando reproductor y servicio Headless en $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/player.py" ]; then
     cp "$SCRIPT_DIR/player.py" "$INSTALL_DIR/player.py"
@@ -94,8 +107,6 @@ chmod +x "$INSTALL_DIR/player.py" "$INSTALL_DIR/uninstall.sh" 2>/dev/null || tru
 
 mkdir -p /media/usb_kiosk
 
-# 4. Configurar servicio systemd para arranque automático en boot
-echo "4/4. Configurando servicio de arranque automático (systemd)..."
 SERVICE_DST="/etc/systemd/system/pi3-video-kiosk.service"
 
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/pi3-video-kiosk.service" ]; then
